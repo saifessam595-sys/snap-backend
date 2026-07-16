@@ -166,33 +166,40 @@ async def extract(request: ExtractRequest):
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 @app.get("/api/v1/download")
-def download_proxy(url: str):
+async def download(url: str):
+    import urllib.parse
+    
     if not url:
-        raise HTTPException(status_code=400, detail="URL is required")
-    
-    parsed_url = url.lower()
-    if "youtube.com" in parsed_url or "youtu.be" in parsed_url:
-        raise HTTPException(status_code=400, detail="YouTube downloads are not supported.")
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.tiktok.com/",
-        "Accept-Encoding": "identity",
-    }
+        raise HTTPException(status_code=400, detail="URL parameter is required")
     
     try:
-        r = requests.get(url, headers=headers, stream=True, timeout=30)
+        # Decode the URL in case it is double URL-encoded from the client
+        decoded_url = urllib.parse.unquote(url)
+        
+        parsed_url = decoded_url.lower()
+        if "youtube.com" in parsed_url or "youtu.be" in parsed_url:
+            raise HTTPException(status_code=400, detail="YouTube downloads are not supported.")
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.tiktok.com/",
+            "Accept-Encoding": "identity",
+        }
+        
+        r = requests.get(decoded_url, headers=headers, stream=True, timeout=30)
         r.raise_for_status()
         
         content_type = r.headers.get("content-type", "application/octet-stream")
         content_length = r.headers.get("content-length")
         
         def iter_content():
-            for chunk in r.iter_content(chunk_size=1024 * 1024):
+            for chunk in r.iter_content(chunk_size=512 * 1024):
                 if chunk:
                     yield chunk
         
-        response_headers = {}
+        response_headers = {
+            "X-Accel-Buffering": "no",  # Disable Vercel buffering for serverless streaming
+        }
         if content_length:
             response_headers["Content-Length"] = content_length
             
@@ -202,7 +209,16 @@ def download_proxy(url: str):
             headers=response_headers
         )
     except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=400, detail=f"Proxy fetch failed: {str(e)}")
+        status_code = getattr(e.response, 'status_code', 400)
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Proxy fetch failed (HTTP {status_code}): {str(e)}. URL attempted: {decoded_url[:120]}..."
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Proxy internal exception: {str(e)}. URL attempted: {decoded_url[:120]}..."
+        )
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
