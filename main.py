@@ -1,7 +1,9 @@
 import os
+import requests
 import uvicorn
 import yt_dlp
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -162,6 +164,45 @@ async def extract(request: ExtractRequest):
         raise HTTPException(status_code=400, detail=f"Extraction failed: {err_msg}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+
+@app.get("/api/v1/download")
+def download_proxy(url: str):
+    if not url:
+        raise HTTPException(status_code=400, detail="URL is required")
+    
+    parsed_url = url.lower()
+    if "youtube.com" in parsed_url or "youtu.be" in parsed_url:
+        raise HTTPException(status_code=400, detail="YouTube downloads are not supported.")
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.tiktok.com/",
+        "Accept-Encoding": "identity",
+    }
+    
+    try:
+        r = requests.get(url, headers=headers, stream=True, timeout=30)
+        r.raise_for_status()
+        
+        content_type = r.headers.get("content-type", "application/octet-stream")
+        content_length = r.headers.get("content-length")
+        
+        def iter_content():
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    yield chunk
+        
+        response_headers = {}
+        if content_length:
+            response_headers["Content-Length"] = content_length
+            
+        return StreamingResponse(
+            iter_content(),
+            media_type=content_type,
+            headers=response_headers
+        )
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=400, detail=f"Proxy fetch failed: {str(e)}")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
