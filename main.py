@@ -12,6 +12,9 @@ app = FastAPI(title="Snap Downloader Extraction API")
 class ExtractRequest(BaseModel):
     url: str
 
+class DownloadRequest(BaseModel):
+    url: str
+
 class MediaOption(BaseModel):
     url: str
     quality: str
@@ -165,10 +168,11 @@ async def extract(request: ExtractRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
-@app.get("/api/v1/download")
-async def download(url: str):
+@app.post("/api/v1/download")
+async def download(request: DownloadRequest):
     import urllib.parse
     
+    url = request.url
     if not url:
         raise HTTPException(status_code=400, detail="URL parameter is required")
     
